@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Platformer – Desafio Final</title>
+<style>
+:root{--bg:#eef2f5;--fg:#1b2a3a;--ac:#c0362c;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1b28;--fg:#eef2f5;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#0f1b28;--fg:#eef2f5;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:Calibri,Arial,sans-serif;display:flex;flex-direction:column;align-items:center;padding:12px}
+#caixa{position:relative;width:100%;max-width:640px}
+canvas{width:100%;display:block;border-radius:10px}
+#tela{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:rgba(15,27,40,.85);color:#fff;border-radius:10px;text-align:center;padding:16px}
+#tela h2{margin:0;font-size:26px}#tela p{margin:0}
+input,button{font:inherit;padding:8px 14px;border-radius:8px;border:0}
+button{background:var(--ac);color:#fff;font-weight:bold;cursor:pointer}
+#ctl{display:flex;gap:10px;margin-top:10px}#ctl button{width:80px;height:52px;font-size:22px;touch-action:none;user-select:none}
+small{margin-top:8px;opacity:.75}
+</style></head><body>
+<div id="caixa"><canvas id="c" width="640" height="360"></canvas><div id="tela"></div></div>
+<div id="ctl"><button id="bE">◀</button><button id="bP">⤒</button><button id="bD">▶</button></div>
+<small>Teclado: setas ou A/D para andar · espaço, ↑ ou W para pular</small>
+<script>
+// ===== MÓDULO 3: variáveis e tipos de dados =====
+let nomeJogador = "Jogador";   // texto (string)
+let vidas = 3;                 // número inteiro
+let moedas = 0;                // número inteiro (contador da fase)
+let faseAtual = 0;             // índice da fase no vetor FASES
+let estado = "inicio";         // texto: inicio | jogando | fim
+let venceu = false;            // booleano
+const GRAVIDADE = 0.55, VEL = 3.2, PULO = -11;
+const teclas = { esq:false, dir:false, pulo:false };
+
+// ===== MÓDULO 6: vetores (fases, plataformas e moedas) =====
+// Plataforma: {x, y, w, h}. Se tiver vx/min/max, ela se move na horizontal.
+const FASES = [
+  { meta:5, inicio:[30,290], porta:[600,290],
+    plataformas:[{x:0,y:330,w:640,h:30},{x:120,y:270,w:100,h:12},{x:260,y:220,w:100,h:12},{x:400,y:170,w:100,h:12},{x:520,y:250,w:100,h:12}],
+    moedas:[[150,240],[290,190],[430,140],[550,220],[330,300]] },
+  { meta:7, inicio:[30,290], porta:[595,290],
+    plataformas:[{x:0,y:330,w:200,h:30},{x:280,y:330,w:160,h:30},{x:520,y:330,w:120,h:30},{x:200,y:260,w:80,h:12},{x:330,y:210,w:90,h:12},{x:470,y:260,w:80,h:12},{x:560,y:170,w:80,h:12},{x:60,y:200,w:90,h:12}],
+    moedas:[[60,170],[230,230],[360,180],[500,230],[590,140],[330,300],[570,300]] },
+  { meta:9, inicio:[30,290], porta:[570,290],
+    plataformas:[{x:0,y:330,w:100,h:30},{x:540,y:330,w:100,h:30},{x:120,y:260,w:70,h:12},{x:450,y:260,w:70,h:12},{x:300,y:180,w:90,h:12},{x:100,y:140,w:80,h:12},{x:500,y:130,w:80,h:12},
+      {x:190,y:300,w:80,h:12,vx:1.2,min:190,max:360}],
+    moedas:[[140,230],[470,230],[330,150],[120,110],[520,100],[270,265],[30,300],[580,300],[330,265]] }
+];
+
+let plataformas = [], itens = [];
+const j = { x:0, y:0, w:20, h:28, vx:0, vy:0, chao:false, sobre:null };
+
+// ===== MÓDULO 7/8: funções (cada uma com uma responsabilidade) =====
+function carregarFase() {
+  const f = FASES[faseAtual];
+  plataformas = f.plataformas.map(p => ({ ...p }));
+  itens = f.moedas.map(([x, y]) => ({ x, y, pego:false }));
+  moedas = 0;
+  Object.assign(j, { x:f.inicio[0], y:f.inicio[1], vx:0, vy:0, chao:false, sobre:null });
+}
+
+function perderVida() {
+  vidas--;
+  if (vidas <= 0) { venceu = false; estado = "fim"; mostrarTela(); }   // SE...
+  else carregarFase();                                                   // ...SENAO
+}
+
+function proximaFase() {
+  if (faseAtual + 1 >= FASES.length) { venceu = true; estado = "fim"; mostrarTela(); }   // SE era a última fase, vitória
+  else { faseAtual++; carregarFase(); }                                                      // SENAO, vai para a próxima
+}
+
+function atualizar() {
+  const f = FASES[faseAtual];
+  // ===== MÓDULO 5: laços de repetição =====
+  for (const p of plataformas) {                      // move plataformas móveis
+    if (p.vx) { p.x += p.vx; if (p.x < p.min || p.x > p.max) p.vx = -p.vx; }
+  }
+  j.vx = teclas.esq ? -VEL : teclas.dir ? VEL : 0;
+  if (teclas.pulo && j.chao) { j.vy = PULO; j.chao = false; }
+  j.x += j.vx + (j.sobre && j.sobre.vx ? j.sobre.vx : 0);
+  j.x = Math.max(0, Math.min(640 - j.w, j.x));
+  const pesAntes = j.y + j.h;
+  j.vy += GRAVIDADE; j.y += j.vy; j.chao = false; j.sobre = null;
+  for (const p of plataformas) {                      // colisão por cima das plataformas
+    if (j.vy >= 0 && pesAntes <= p.y + 1 && j.y + j.h >= p.y && j.x + j.w > p.x && j.x < p.x + p.w) {
+      j.y = p.y - j.h; j.vy = 0; j.chao = true; j.sobre = p;
+    }
+  }
+  for (const m of itens) {                            // coleta de moedas
+    if (!m.pego && Math.abs(j.x + 10 - m.x) < 16 && Math.abs(j.y + 14 - m.y) < 20) { m.pego = true; moedas++; }
+  }
+  // ===== MÓDULO 4: condicional SE...SENAO =====
+  const sobrePorta = j.x + j.w > f.porta[0] && j.x < f.porta[0] + 28 && j.y + j.h > f.porta[1];
+  if (sobrePorta && moedas >= f.meta) proximaFase();   // SE moedas >= meta ENTAO libera a próxima fase
+  if (j.y > 400) perderVida();                         // caiu no buraco
+}
+
+function desenhar() {
+  const x = document.getElementById("c").getContext("2d"), f = FASES[faseAtual];
+  x.fillStyle = "#9fb6c3"; x.fillRect(0, 0, 640, 360);
+  x.fillStyle = "#2f4b63"; for (const p of plataformas) x.fillRect(p.x, p.y, p.w, p.h);
+  x.fillStyle = "#f2b134"; for (const m of itens) if (!m.pego) { x.beginPath(); x.arc(m.x, m.y, 8, 0, 7); x.fill(); }
+  const aberta = moedas >= f.meta;                      // porta verde se aberta, vermelha se fechada
+  x.fillStyle = aberta ? "#3aa655" : "#c0362c"; x.fillRect(f.porta[0], f.porta[1], 28, 40);
+  x.fillStyle = "#e8743b"; x.fillRect(j.x, j.y, j.w, j.h);
+  x.fillStyle = "#fff"; x.fillRect(j.x + 12, j.y + 6, 4, 4);
+  x.fillStyle = "#1b2a3a"; x.font = "bold 16px Calibri, Arial";
+  x.fillText(nomeJogador + "   Fase " + (faseAtual + 1) + "/" + FASES.length + "   Moedas " + moedas + "/" + f.meta + "   Vidas " + "♥".repeat(Math.max(vidas, 0)), 12, 24);
+}
+
+function mostrarTela() {
+  const t = document.getElementById("tela");
+  t.style.display = "flex";
+  if (estado === "inicio") {
+    t.innerHTML = '<h2>Platformer</h2><p>Colete as moedas, abra a porta e avance pelas 3 fases.</p><input id="nome" maxlength="14" placeholder="Seu nome"><button id="ok">Jogar</button>';
+  } else {
+    t.innerHTML = '<h2>' + (venceu ? "Você venceu, " : "Fim de jogo, ") + nomeJogador + '!</h2><p>' + (venceu ? "As 3 fases foram concluídas." : "Suas vidas acabaram.") + '</p><button id="ok">Jogar de novo</button>';
+  }
+  document.getElementById("ok").onclick = iniciar;
+}
+
+function iniciar() {
+  const campo = document.getElementById("nome");
+  if (campo && campo.value.trim()) nomeJogador = campo.value.trim();
+  vidas = 3; faseAtual = 0; estado = "jogando";
+  carregarFase();
+  document.getElementById("tela").style.display = "none";
+}
+
+// ===== Entrada (teclado e botões de toque) =====
+const mapa = { ArrowLeft:"esq", a:"esq", ArrowRight:"dir", d:"dir", ArrowUp:"pulo", w:"pulo", " ":"pulo" };
+addEventListener("keydown", e => { const k = mapa[e.key]; if (k && e.target.tagName !== "INPUT") { teclas[k] = true; e.preventDefault(); } });
+addEventListener("keyup", e => { const k = mapa[e.key]; if (k) teclas[k] = false; });
+[["bE","esq"],["bD","dir"],["bP","pulo"]].forEach(([id, k]) => {
+  const b = document.getElementById(id);
+  b.onpointerdown = () => teclas[k] = true;
+  b.onpointerup = b.onpointerleave = b.onpointercancel = () => teclas[k] = false;
+});
+
+// ===== Laço principal do jogo (60 atualizações por segundo) =====
+let ultimo = 0, acum = 0;
+function ciclo(t) {
+  acum += Math.min(t - ultimo, 100); ultimo = t;
+  while (acum >= 1000 / 60) { if (estado === "jogando") atualizar(); acum -= 1000 / 60; }
+  if (estado !== "inicio") desenhar();
+  requestAnimationFrame(ciclo);
+}
+mostrarTela();
+requestAnimationFrame(ciclo);
+</script></body></html>
